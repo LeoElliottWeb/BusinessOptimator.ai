@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import homeGif from './home.gif'; // <--- Direct import for Vite
+import homeGif from './home.gif';
 
 export default function RadioStation() {
     return (
@@ -31,7 +31,11 @@ export default function RadioStation() {
                     href="https://splendorous-cupcake-ea4c80.netlify.app/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ color: '#58a6ff', textDecoration: 'none', fontSize: '1.1rem' }}
+                    style={{
+                        color: '#58a6ff',
+                        textDecoration: 'none',
+                        fontSize: '1.1rem',
+                    }}
                 >
                     Estate agents
                 </a>
@@ -39,7 +43,11 @@ export default function RadioStation() {
                     href="https://totalrecall.network/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{ color: '#58a6ff', textDecoration: 'none', fontSize: '1.1rem' }}
+                    style={{
+                        color: '#58a6ff',
+                        textDecoration: 'none',
+                        fontSize: '1.1rem',
+                    }}
                 >
                     TotalRecall
                 </a>
@@ -70,7 +78,7 @@ export default function RadioStation() {
                 </h1>
 
                 <img
-                    src={homeGif} // <--- Using the imported variable
+                    src={homeGif}
                     alt="home"
                     style={{
                         width: '50%',
@@ -87,7 +95,7 @@ export default function RadioStation() {
                         marginTop: '30px',
                     }}
                 >
-                    We can analyse your business process and automate them
+                    We can analyse your business processes and automate them
                 </p>
             </div>
         </div>
