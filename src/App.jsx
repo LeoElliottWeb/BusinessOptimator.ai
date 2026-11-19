@@ -5,7 +5,7 @@ import { fetchFile } from '@ffmpeg/util';
 import coreURL from '@ffmpeg/core?url';
 import wasmURL from '@ffmpeg/core/wasm?url';
 
-import homeImage from './Home.gif';
+import homeImage from './home.gif';
 
 import './App.css';
 
