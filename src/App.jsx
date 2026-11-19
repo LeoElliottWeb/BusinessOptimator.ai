@@ -1,33 +1,48 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
-
-
-import homeImage from './home.gif';
-
+﻿
+import React, { useState, useEffect, useRef } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import './App.css';
 
-// ==================================================================
-// Constants
-// ==================================================================
-const FPS = 30;
-const VIDEO_W = 854;
-const VIDEO_H = 480;
-const PREVIEW_W = 640;
-const PREVIEW_H = 360;
+// ------------------------------------------------------------------
+// Configuration: YouTube
+// ------------------------------------------------------------------
+const YOUTUBE_API_KEY = 'AIzaSyCXOb1T_QdDLFV56BsTnSYnMoxC_O4P0Us';
+const YOUTUBE_CHANNEL_ID = 'UC280rpUaBWwlkSOYnSutxtA';
+const YOUTUBE_CHANNEL_URL =
+    'https://www.youtube.com/channel/UC280rpUaBWwlkSOYnSutxtA';
 
-const MAX_OUTPUT_SECONDS = 0;
-const CHUNK_SECONDS = 10;
-const STAR_COUNT = 70;
+// The "uploads" playlist for a channel is the channel ID with UC → UU.
+const YOUTUBE_UPLOADS_PLAYLIST_ID =
+    'UU' + YOUTUBE_CHANNEL_ID.slice(2);
 
-// ==================================================================
-// Helpers
-// ==================================================================
-function formatSeconds(totalSeconds) {
-    const s = Math.max(0, Math.floor(totalSeconds || 0));
-    const m = Math.floor(s / 60);
-    const r = s % 60;
-    return `${m}:${String(r).padStart(2, '0')}`;
+// Minimum duration (in seconds) for a video to be included.
+// 2 minutes 35 seconds = 2*60 + 35 = 155 seconds.
+const MIN_VIDEO_DURATION_SECONDS = 155;
+
+// ------------------------------------------------------------------
+// Configuration: Supabase
+// ------------------------------------------------------------------
+const SUPABASE_URL = 'https://xptlootjhzsunvsqqkro.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_oGXmxWNXvypN8XyjM71sBA_b_DINXJo';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ------------------------------------------------------------------
+// Helper: format a date string as dd/mm/yyyy
+// ------------------------------------------------------------------
+function formatDateDMY(input) {
+    if (!input) return '-';
+    const d = new Date(input);
+    if (isNaN(d.getTime())) return '-';
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
 }
 
+// ------------------------------------------------------------------
+// Helper: format a date string as dd/mm/yyyy HH:MM:SS
+// ------------------------------------------------------------------
 function formatDateTimeDMY(input) {
     if (!input) return '-';
     const d = new Date(input);
@@ -35,408 +50,729 @@ function formatDateTimeDMY(input) {
     const day = String(d.getDate()).padStart(2, '0');
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const year = d.getFullYear();
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    const ss = String(d.getSeconds()).padStart(2, '0');
-    return `${day}/${month}/${year} ${hh}:${mm}:${ss}`;
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
+    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
 }
 
-function drawVideoContain(ctx, videoEl, canvasW, canvasH) {
-    if (!videoEl) return;
-    const vw = videoEl.videoWidth;
-    const vh = videoEl.videoHeight;
-    if (!vw || !vh) return;
+// ------------------------------------------------------------------
+// Helper: turn a 2-letter ISO code into a full country name
+// ------------------------------------------------------------------
+function codeToCountryName(code) {
+    if (!code) return 'Unknown';
+    const upper = String(code).toUpperCase();
+    if (!/^[A-Z]{2}$/.test(upper)) return upper;
 
-    const videoRatio = vw / vh;
-    const canvasRatio = canvasW / canvasH;
-
-    let drawW, drawH, dx, dy;
-    if (videoRatio > canvasRatio) {
-        drawW = canvasW;
-        drawH = canvasW / videoRatio;
-        dx = 0;
-        dy = (canvasH - drawH) / 2;
-    } else {
-        drawH = canvasH;
-        drawW = canvasH * videoRatio;
-        dx = (canvasW - drawW) / 2;
-        dy = 0;
+    try {
+        if (typeof Intl !== 'undefined' && Intl.DisplayNames) {
+            const dn = new Intl.DisplayNames(['en'], { type: 'region' });
+            const name = dn.of(upper);
+            if (name && name !== upper) return name;
+        }
+    } catch (e) {
+        // fall through
     }
-    ctx.drawImage(videoEl, dx, dy, drawW, drawH);
+    return upper;
 }
 
-function createStars(canvasW, canvasH) {
-    const stars = [];
-    for (let i = 0; i < STAR_COUNT; i++) {
-        stars.push({
-            nx: Math.random(),
-            ny: Math.random(),
-            r: 1.5 + Math.random() * 3.5,
-            phase: Math.random() * Math.PI * 2,
-            twinkleSpeed: 1.5 + Math.random() * 3.5,
-            driftAmpX: 4 + Math.random() * 12,
-            driftAmpY: 4 + Math.random() * 12,
-            driftSpeedX: 0.15 + Math.random() * 0.35,
-            driftSpeedY: 0.15 + Math.random() * 0.35,
-            baseAlpha: 0.55 + Math.random() * 0.45,
-            points: Math.random() < 0.5 ? 4 : 5,
-        });
-    }
-    return stars;
+// ------------------------------------------------------------------
+// Helper: map a language code to a country name
+// ------------------------------------------------------------------
+function languageToCountryName(lang) {
+    const map = {
+        af: 'South Africa',
+        ar: 'Saudi Arabia',
+        bg: 'Bulgaria',
+        ca: 'Spain',
+        cs: 'Czechia',
+        cy: 'United Kingdom',
+        da: 'Denmark',
+        de: 'Germany',
+        el: 'Greece',
+        en: 'United States',
+        es: 'Spain',
+        et: 'Estonia',
+        eu: 'Spain',
+        fa: 'Iran',
+        fi: 'Finland',
+        fr: 'France',
+        ga: 'Ireland',
+        gl: 'Spain',
+        he: 'Israel',
+        hi: 'India',
+        hr: 'Croatia',
+        hu: 'Hungary',
+        id: 'Indonesia',
+        is: 'Iceland',
+        it: 'Italy',
+        ja: 'Japan',
+        ko: 'South Korea',
+        lt: 'Lithuania',
+        lv: 'Latvia',
+        ms: 'Malaysia',
+        mt: 'Malta',
+        nl: 'Netherlands',
+        no: 'Norway',
+        pl: 'Poland',
+        pt: 'Portugal',
+        ro: 'Romania',
+        ru: 'Russia',
+        sk: 'Slovakia',
+        sl: 'Slovenia',
+        sq: 'Albania',
+        sr: 'Serbia',
+        sv: 'Sweden',
+        th: 'Thailand',
+        tr: 'Turkey',
+        uk: 'Ukraine',
+        vi: 'Vietnam',
+        zh: 'China',
+    };
+    const key = String(lang).toLowerCase().slice(0, 2);
+    return map[key] || null;
 }
 
-function drawStars(ctx, stars, t, bass, width, height) {
-    for (const s of stars) {
-        const px = s.nx * width + Math.sin(t * s.driftSpeedX + s.phase) * s.driftAmpX;
-        const py = s.ny * height + Math.cos(t * s.driftSpeedY + s.phase * 1.3) * s.driftAmpY;
+// ------------------------------------------------------------------
+// Helper: detect the visitor's country as a full name
+// ------------------------------------------------------------------
+function detectCountryName() {
+    try {
+        const locales = navigator.languages || [navigator.language || 'en-US'];
 
-        const twinkle = 0.5 + 0.5 * Math.sin(t * s.twinkleSpeed + s.phase);
-        const alpha = s.baseAlpha * (0.35 + 0.65 * twinkle);
-
-        const sizeBoost = bass * 6;
-        const outerR = s.r + sizeBoost;
-
-        ctx.save();
-        ctx.shadowColor = `rgba(255, 230, 40, ${alpha * 0.9})`;
-        ctx.shadowBlur = 10 + bass * 22;
-
-        const points = s.points;
-        const innerR = outerR * 0.42;
-        ctx.beginPath();
-        for (let i = 0; i < points * 2; i++) {
-            const rad = (i * Math.PI) / points - Math.PI / 2;
-            const rr = i % 2 === 0 ? outerR : innerR;
-            const sx = px + Math.cos(rad) * rr;
-            const sy = py + Math.sin(rad) * rr;
-            if (i === 0) ctx.moveTo(sx, sy);
-            else ctx.lineTo(sx, sy);
+        for (const loc of locales) {
+            if (typeof loc !== 'string') continue;
+            const parts = loc.split('-');
+            if (parts.length >= 2) {
+                const region = parts[parts.length - 1].toUpperCase();
+                if (/^[A-Z]{2}$/.test(region)) {
+                    return codeToCountryName(region);
+                }
+            }
         }
-        ctx.closePath();
 
-        const grad = ctx.createRadialGradient(px, py, 0, px, py, outerR);
-        grad.addColorStop(0, `rgba(255, 255, 200, ${alpha})`);
-        grad.addColorStop(0.45, `rgba(255, 225, 40, ${alpha})`);
-        grad.addColorStop(1, `rgba(255, 175, 0, ${alpha * 0.55})`);
-        ctx.fillStyle = grad;
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(px, py, Math.max(0.6, outerR * 0.25), 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255, 255, 240, ${alpha})`;
-        ctx.fill();
-
-        ctx.restore();
+        for (const loc of locales) {
+            const mapped = languageToCountryName(loc);
+            if (mapped) return mapped;
+        }
+    } catch (e) {
+        // ignore
     }
+    return 'Unknown';
 }
 
-function drawMusicVideoFrame(ctx, canvas, t, opts) {
-    const {
-        analyser, freqData, title, subtitle,
-        duration, particles, videoEl, stars,
-    } = opts;
-
-    const { width, height } = canvas;
-    const cx = width / 2;
-    const cy = height / 2;
-
-    let bass = 0, mid = 0, treble = 0;
-    if (analyser && freqData) {
-        analyser.getByteFrequencyData(freqData);
-        const N = freqData.length;
-        const bassEnd = Math.floor(N * 0.08);
-        const midEnd = Math.floor(N * 0.35);
-        let s1 = 0, s2 = 0, s3 = 0;
-        for (let i = 0; i < bassEnd; i++) s1 += freqData[i];
-        for (let i = bassEnd; i < midEnd; i++) s2 += freqData[i];
-        for (let i = midEnd; i < N; i++) s3 += freqData[i];
-        bass = s1 / Math.max(1, bassEnd) / 255;
-        mid = s2 / Math.max(1, midEnd - bassEnd) / 255;
-        treble = s3 / Math.max(1, N - midEnd) / 255;
-    }
-
-    const hueShift = (t * 55) % 360;
-
-    ctx.fillStyle = `hsl(${(hueShift + 260) % 360}, 45%, 5%)`;
-    ctx.fillRect(0, 0, width, height);
-
-    const videoReady =
-        videoEl &&
-        videoEl.readyState >= 2 &&
-        videoEl.videoWidth > 0 &&
-        videoEl.videoHeight > 0;
-
-    if (videoReady) {
-        const zoom = 1.0 + bass * 0.025 + treble * 0.01;
-        const shakeX = (Math.sin(t * 3.1) + (Math.random() - 0.5)) * bass * 3;
-        const shakeY = (Math.cos(t * 2.7) + (Math.random() - 0.5)) * bass * 3;
-        const angle = Math.sin(t * 0.9) * 0.008 + (Math.random() - 0.5) * bass * 0.012;
-
-        ctx.save();
-        ctx.translate(cx + shakeX, cy + shakeY);
-        ctx.rotate(angle);
-        ctx.scale(zoom, zoom);
-        ctx.translate(-cx, -cy);
-
-        drawVideoContain(ctx, videoEl, width, height);
-
-        ctx.restore();
-
-        ctx.save();
-        ctx.globalCompositeOperation = 'overlay';
-        const washAlpha = 0.22 + bass * 0.18;
-        const washHue = (hueShift + 40) % 360;
-        ctx.fillStyle = `hsla(${washHue}, 90%, 55%, ${washAlpha})`;
-        ctx.fillRect(0, 0, width, height);
-        ctx.restore();
-
-        if (bass > 0.08) {
-            ctx.save();
-            ctx.globalCompositeOperation = 'saturation';
-            ctx.fillStyle = `hsla(${(hueShift + 180) % 360}, 100%, 50%, ${0.18 + bass * 0.35})`;
-            ctx.fillRect(0, 0, width, height);
-            ctx.restore();
-        }
-
-        if (treble > 0.05) {
-            ctx.save();
-            ctx.globalCompositeOperation = 'soft-light';
-            ctx.fillStyle = `hsla(${(50 + hueShift) % 360}, 100%, 60%, ${treble * 0.45})`;
-            ctx.fillRect(0, 0, width, height);
-            ctx.restore();
-        }
-
-        if (bass > 0.05) {
-            const glow = ctx.createRadialGradient(
-                cx, cy, 0,
-                cx, cy, Math.max(width, height) * (0.55 + bass * 0.35)
-            );
-            glow.addColorStop(0, `hsla(${(150 + hueShift) % 360}, 95%, 60%, ${bass * 0.4})`);
-            glow.addColorStop(0.6, `hsla(${(280 + hueShift) % 360}, 95%, 55%, ${bass * 0.18})`);
-            glow.addColorStop(1, 'rgba(0,0,0,0)');
-            ctx.save();
-            ctx.globalCompositeOperation = 'screen';
-            ctx.fillStyle = glow;
-            ctx.fillRect(0, 0, width, height);
-            ctx.restore();
-        }
-
-        const rimHue = (hueShift * 1.4) % 360;
-        const rim = ctx.createRadialGradient(
-            cx, cy, Math.min(width, height) * 0.32,
-            cx, cy, Math.max(width, height) * 0.78
-        );
-        rim.addColorStop(0, 'rgba(0,0,0,0)');
-        rim.addColorStop(0.65, `hsla(${rimHue}, 90%, 55%, ${0.12 + bass * 0.22})`);
-        rim.addColorStop(1, `hsla(${(rimHue + 120) % 360}, 90%, 45%, ${0.35 + bass * 0.35})`);
-        ctx.fillStyle = rim;
-        ctx.fillRect(0, 0, width, height);
-    } else {
-        const grad = ctx.createLinearGradient(0, 0, width, height);
-        grad.addColorStop(0, `hsl(${(200 + hueShift) % 360}, 65%, 8%)`);
-        grad.addColorStop(0.5, `hsl(${(280 + hueShift) % 360}, 70%, 6%)`);
-        grad.addColorStop(1, `hsl(${(160 + hueShift) % 360}, 65%, 4%)`);
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, width, height);
-    }
-
-    if (bass > 0.6) {
-        ctx.fillStyle = `hsla(${(60 + hueShift) % 360}, 100%, 60%, ${(bass - 0.6) * 0.35})`;
-        ctx.fillRect(0, 0, width, height);
-    }
-
-    if (stars && stars.length) {
-        drawStars(ctx, stars, t, bass, width, height);
-    }
-
-    if (particles) {
-        for (const p of particles) {
-            const life = 1 - p.age / p.life;
-            if (life <= 0) continue;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.r * life, 0, Math.PI * 2);
-            ctx.fillStyle = `hsla(${p.hue}, 95%, 65%, ${life * 0.9})`;
-            ctx.fill();
-        }
-    }
-
-    const titleFont = Math.floor(width / 18);
-    ctx.font = `bold ${titleFont}px Segoe UI, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    ctx.shadowColor = `hsl(${(hueShift + 60) % 360}, 100%, 55%)`;
-    ctx.shadowBlur = 24 + bass * 30;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(title || 'Untitled', cx, height * 0.82, width * 0.9);
-
-    ctx.shadowBlur = 0;
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = `hsla(${(hueShift + 140) % 360}, 100%, 60%, ${0.35 + bass * 0.5})`;
-    ctx.strokeText(title || 'Untitled', cx, height * 0.82, width * 0.9);
-
-    const subFont = Math.floor(width / 46);
-    ctx.font = `${subFont}px Segoe UI, sans-serif`;
-    ctx.shadowColor = 'rgba(0,0,0,0.9)';
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = 'rgba(245,240,210,0.9)';
-    ctx.fillText(subtitle || '', cx, height * 0.90, width * 0.9);
-    ctx.shadowBlur = 0;
-
-    const pct = duration > 0 ? Math.min(1, t / duration) : 0;
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    ctx.fillRect(0, 0, width, 6);
-    const barGrad = ctx.createLinearGradient(0, 0, width * Math.max(pct, 0.001), 0);
-    barGrad.addColorStop(0, `hsl(${(50 + hueShift) % 360}, 100%, 60%)`);
-    barGrad.addColorStop(1, `hsl(${(160 + hueShift) % 360}, 95%, 60%)`);
-    ctx.fillStyle = barGrad;
-    ctx.fillRect(0, 0, width * pct, 6);
-
-    ctx.font = `${Math.floor(width / 60)}px monospace`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.shadowColor = 'rgba(0,0,0,0.9)';
-    ctx.shadowBlur = 6;
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.fillText(`${formatSeconds(t)} / ${formatSeconds(duration)}`, 20, 20);
-    ctx.shadowBlur = 0;
+// ------------------------------------------------------------------
+// Helper: parse ISO 8601 duration to seconds
+// ------------------------------------------------------------------
+function parseISO8601Duration(duration) {
+    if (!duration || typeof duration !== 'string') return 0;
+    const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+    if (!match) return 0;
+    const hours = parseInt(match[1] || '0', 10);
+    const minutes = parseInt(match[2] || '0', 10);
+    const seconds = parseInt(match[3] || '0', 10);
+    return hours * 3600 + minutes * 60 + seconds;
 }
 
-// ==================================================================
-// Main component
-// ==================================================================
-export default function MusicVideoMaker() {
-    const [wavFileName, setWavFileName] = useState('');
-    const [audioUrl, setAudioUrl] = useState(null);
-    const [audioBuffer, setAudioBuffer] = useState(null);
-    const [fullDuration, setFullDuration] = useState(0);
-
-    const [videoFile, setVideoFile] = useState(null);
-    const [videoFileName, setVideoFileName] = useState('');
-    const [videoUrl, setVideoUrl] = useState(null);
-    const [videoReady, setVideoReady] = useState(false);
-    const [videoError, setVideoError] = useState(null);
-
-    const [title, setTitle] = useState('My Music Video');
-    const [subtitle, setSubtitle] = useState('Created with NormSki Video Maker');
-
-    const [isPreparing, setIsPreparing] = useState(false);
-    const [isRendering, setIsRendering] = useState(false);
-    const [isTranscoding, setIsTranscoding] = useState(false);
-    const [progress, setProgress] = useState(0);
-    const [encodeProgress, setEncodeProgress] = useState(0);
-    const [chunkInfo, setChunkInfo] = useState('');
-    const [outputUrl, setOutputUrl] = useState(null);
-    const [outputExt, setOutputExt] = useState('mp4');
+export default function RadioStation() {
+    const [tracks, setTracks] = useState([]);
+    const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
+    const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [statusMessage, setStatusMessage] = useState('');
-    const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
-    const [elapsedTime, setElapsedTime] = useState(0);
-    const [eta, setEta] = useState('');
 
-    const canvasRef = useRef(null);
-    const previewCanvasRef = useRef(null);
-    const videoElRef = useRef(null);
-    const audioCtxRef = useRef(null);
-    const analyserRef = useRef(null);
-    const streamDestRef = useRef(null);
-    const sourceNodeRef = useRef(null);
-    const mediaRecorderRef = useRef(null);
-    const recordedChunksRef = useRef([]);
-    const rafRef = useRef(null);
-    const cancelFlagRef = useRef(false);
-    const particlesRef = useRef([]);
-    const starsRef = useRef(createStars(VIDEO_W, VIDEO_H));
-    const buffersRef = useRef({ freq: null });
-    const ffmpegRef = useRef(null);
-    const timerRef = useRef(null);
-    const encodeStartRef = useRef(0);
-    const audioStartTimeRef = useRef(0);
-    const finishTimeoutRef = useRef(null);
-    const videoStallCheckRef = useRef(0);
+    const playerRef = useRef(null);
+    const playerReadyRef = useRef(false);
+    const lastLoadedIndexRef = useRef(null);
+
+    const [shoutOutInput, setShoutOutInput] = useState('');
+    const [shouts, setShouts] = useState([]);
+    const [activeShoutOut, setActiveShoutOut] = useState(null);
+    const [isSendingShout, setIsSendingShout] = useState(false);
+    const [shoutError, setShoutError] = useState(null);
+    const [userCountry, setUserCountry] = useState('Unknown');
+    const shoutOutTimeoutRef = useRef(null);
+
+    // Refs so YT event callbacks always see the latest values.
+    const tracksRef = useRef(tracks);
+    const currentTrackIndexRef = useRef(currentTrackIndex);
 
     useEffect(() => {
+        tracksRef.current = tracks;
+    }, [tracks]);
+
+    useEffect(() => {
+        currentTrackIndexRef.current = currentTrackIndex;
+    }, [currentTrackIndex]);
+
+    useEffect(() => {
+        setUserCountry(detectCountryName());
+    }, []);
+
+    // ----------------------------------------------------------------
+    // Shout overlay helper
+    // ----------------------------------------------------------------
+    const showShoutOverlay = (message) => {
+        if (!message) return;
+        if (shoutOutTimeoutRef.current) clearTimeout(shoutOutTimeoutRef.current);
+        setActiveShoutOut(message);
+        shoutOutTimeoutRef.current = setTimeout(() => {
+            setActiveShoutOut(null);
+            shoutOutTimeoutRef.current = null;
+        }, 5000);
+    };
+
+    const loadShoutsFromTable = async () => {
+        const { data, error } = await supabase
+            .from('shouts')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(500);
+
+        if (error) {
+            console.warn('Could not load Shouts table:', error);
+            return [];
+        }
+        setShouts(data || []);
+        return data || [];
+    };
+
+    useEffect(() => {
+        loadShoutsFromTable();
+    }, []);
+
+    // ----------------------------------------------------------------
+    // Realtime shouts
+    // ----------------------------------------------------------------
+    useEffect(() => {
+        const channel = supabase
+            .channel('shouts-realtime')
+            .on(
+                'postgres_changes',
+                { event: 'INSERT', schema: 'public', table: 'shouts' },
+                (payload) => {
+                    const newShout = payload.new;
+                    setShouts((prev) => {
+                        if (prev.some((s) => s.id === newShout.id)) return prev;
+                        return [newShout, ...prev];
+                    });
+                    showShoutOverlay(newShout.message);
+                }
+            )
+            .subscribe((status) => {
+                if (status === 'CHANNEL_ERROR') {
+                    console.warn('Realtime channel error for shouts.');
+                }
+            });
+
         return () => {
-            if (rafRef.current) cancelAnimationFrame(rafRef.current);
-            if (timerRef.current) clearInterval(timerRef.current);
-            if (finishTimeoutRef.current) clearTimeout(finishTimeoutRef.current);
-            if (sourceNodeRef.current) {
-                try { sourceNodeRef.current.stop(); } catch (e) { }
+            supabase.removeChannel(channel);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // ----------------------------------------------------------------
+    // Fetch YouTube tracks, then filter out videos shorter than
+    // MIN_VIDEO_DURATION_SECONDS (2 minutes 35 seconds).
+    // ----------------------------------------------------------------
+    useEffect(() => {
+        let cancelled = false;
+
+        const fetchChannelTracks = async () => {
+            setIsLoading(true);
+            try {
+                const allTrackItems = [];
+                let nextPageToken = '';
+                let pageCount = 0;
+                const MAX_PAGES = 40; // safety cap: 40 * 50 = 2000 videos
+
+                // 1. Fetch all playlist items (without duration)
+                do {
+                    const url =
+                        `https://www.googleapis.com/youtube/v3/playlistItems` +
+                        `?key=${YOUTUBE_API_KEY}` +
+                        `&playlistId=${YOUTUBE_UPLOADS_PLAYLIST_ID}` +
+                        `&part=snippet,contentDetails` +
+                        `&maxResults=50` +
+                        (nextPageToken
+                            ? `&pageToken=${encodeURIComponent(nextPageToken)}`
+                            : '');
+
+                    const response = await fetch(url);
+                    if (!response.ok) {
+                        throw new Error(
+                            'Failed to fetch tracks from YouTube.'
+                        );
+                    }
+
+                    const data = await response.json();
+                    if (cancelled) return;
+
+                    const items = data.items || [];
+                    for (const item of items) {
+                        const videoId =
+                            item.contentDetails?.videoId ||
+                            item.snippet?.resourceId?.videoId;
+                        if (!videoId) continue;
+
+                        const thumbs = item.snippet?.thumbnails || {};
+                        const thumb =
+                            thumbs.high?.url ||
+                            thumbs.medium?.url ||
+                            thumbs.default?.url ||
+                            '';
+
+                        allTrackItems.push({
+                            id: videoId,
+                            title: item.snippet?.title || '(untitled)',
+                            thumbnail: thumb,
+                            description: item.snippet?.description || '',
+                        });
+                    }
+
+                    nextPageToken = data.nextPageToken || '';
+                    pageCount++;
+                } while (nextPageToken && pageCount < MAX_PAGES);
+
+                if (cancelled) return;
+
+                // 2. Fetch duration for all video IDs in batches (50 per request)
+                const videoIds = allTrackItems.map((t) => t.id);
+                const durationMap = new Map();
+
+                for (let i = 0; i < videoIds.length; i += 50) {
+                    const batch = videoIds.slice(i, i + 50);
+                    const videoUrl =
+                        `https://www.googleapis.com/youtube/v3/videos` +
+                        `?key=${YOUTUBE_API_KEY}` +
+                        `&id=${batch.join(',')}` +
+                        `&part=contentDetails`;
+
+                    const res = await fetch(videoUrl);
+                    if (!res.ok) {
+                        console.warn('Failed to fetch video durations for a batch, skipping filter for these.');
+                        continue;
+                    }
+
+                    const videoData = await res.json();
+                    if (cancelled) return;
+
+                    for (const item of videoData.items || []) {
+                        const durationStr = item.contentDetails?.duration;
+                        if (durationStr) {
+                            durationMap.set(
+                                item.id,
+                                parseISO8601Duration(durationStr)
+                            );
+                        }
+                    }
+                }
+
+                if (cancelled) return;
+
+                // 3. Keep only videos longer than MIN_VIDEO_DURATION_SECONDS.
+                // If duration is unavailable, exclude it (we can't confirm it meets the threshold).
+                const filteredTracks = allTrackItems.filter((track) => {
+                    const seconds = durationMap.get(track.id);
+                    if (seconds === undefined) return false;
+                    return seconds > MIN_VIDEO_DURATION_SECONDS;
+                });
+
+                setTracks(filteredTracks);
+            } catch (err) {
+                if (!cancelled) setError(err.message);
+            } finally {
+                if (!cancelled) setIsLoading(false);
             }
-            if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-                audioCtxRef.current.close().catch(() => { });
+        };
+
+        if (YOUTUBE_API_KEY !== 'YOUR_YOUTUBE_API_KEY') {
+            fetchChannelTracks();
+        } else {
+            setError('Please configure your YouTube API Key and Channel ID.');
+            setIsLoading(false);
+        }
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // ----------------------------------------------------------------
+    // Create the YT.Player exactly once, once the iframe is in the DOM
+    // with a valid src and the YT API is loaded.
+    // ----------------------------------------------------------------
+    useEffect(() => {
+        if (tracks.length === 0) return;
+        if (playerRef.current) return;
+
+        let cancelled = false;
+
+        const createPlayer = () => {
+            if (cancelled) return;
+            if (playerRef.current) return;
+
+            const el = document.getElementById('youtube-player');
+            if (!el) return;
+
+            playerRef.current = new window.YT.Player('youtube-player', {
+                events: {
+                    onReady: () => {
+                        playerReadyRef.current = true;
+                        lastLoadedIndexRef.current =
+                            currentTrackIndexRef.current;
+                    },
+                    onStateChange: (event) => {
+                        if (event.data === window.YT.PlayerState.ENDED) {
+                            const len = tracksRef.current.length;
+                            if (len === 0) return;
+                            setCurrentTrackIndex((prev) =>
+                                prev === len - 1 ? 0 : prev + 1
+                            );
+                        }
+                    },
+                    onError: (e) => {
+                        console.warn('YouTube player error code:', e.data);
+                    },
+                },
+            });
+        };
+
+        if (window.YT && window.YT.Player) {
+            createPlayer();
+        } else {
+            const prevCallback = window.onYouTubeIframeAPIReady;
+            window.onYouTubeIframeAPIReady = () => {
+                if (typeof prevCallback === 'function') prevCallback();
+                createPlayer();
+            };
+
+            if (
+                !document.querySelector('script[src*="youtube.com/iframe_api"]')
+            ) {
+                const tag = document.createElement('script');
+                tag.src = 'https://www.youtube.com/iframe_api';
+                const firstScriptTag =
+                    document.getElementsByTagName('script')[0];
+                if (firstScriptTag && firstScriptTag.parentNode) {
+                    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+                } else {
+                    document.head.appendChild(tag);
+                }
+            }
+        }
+
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tracks]);
+
+    // ----------------------------------------------------------------
+    // When the user picks a different track, tell the player to load it.
+    // ----------------------------------------------------------------
+    useEffect(() => {
+        if (!playerReadyRef.current) return;
+        if (!playerRef.current) return;
+        if (tracks.length === 0) return;
+        if (lastLoadedIndexRef.current === currentTrackIndex) return;
+
+        const videoId = tracks[currentTrackIndex]?.id;
+        if (!videoId) return;
+
+        try {
+            playerRef.current.loadVideoById(videoId);
+            lastLoadedIndexRef.current = currentTrackIndex;
+        } catch (e) {
+            console.warn('loadVideoById failed:', e);
+        }
+    }, [currentTrackIndex, tracks]);
+
+    // ----------------------------------------------------------------
+    // Cleanup on unmount
+    // ----------------------------------------------------------------
+    useEffect(() => {
+        return () => {
+            if (playerRef.current) {
+                try {
+                    playerRef.current.destroy();
+                } catch (e) {
+                    // ignore
+                }
+                playerRef.current = null;
+            }
+            playerReadyRef.current = false;
+            if (shoutOutTimeoutRef.current) {
+                clearTimeout(shoutOutTimeoutRef.current);
             }
         };
     }, []);
 
+    const playNextTrack = () => {
+        setCurrentTrackIndex((prevIndex) =>
+            prevIndex === tracks.length - 1 ? 0 : prevIndex + 1
+        );
+    };
 
+    const playPreviousTrack = () => {
+        setCurrentTrackIndex((prevIndex) =>
+            prevIndex === 0 ? tracks.length - 1 : prevIndex - 1
+        );
+    };
+
+    const handleShoutOutSubmit = async (e) => {
+        e.preventDefault();
+        const message = shoutOutInput.trim();
+        if (!message || isSendingShout) return;
+
+        setIsSendingShout(true);
+        setShoutError(null);
+
+        const country =
+            userCountry && userCountry !== 'Unknown'
+                ? userCountry
+                : detectCountryName();
+
+        const { error: insertError } = await supabase
+            .from('shouts')
+            .insert([{ message, country }])
+            .select()
+            .single();
+
+        setIsSendingShout(false);
+
+        if (insertError) {
+            console.error('Supabase insert error:', insertError);
+            setShoutError(`Could not send shout: ${insertError.message}`);
+            return;
+        }
+
+        setShoutOutInput('');
+    };
+
+    if (isLoading) {
+        return (
+            <div style={styles.container}>
+                <div style={styles.loadingText}>Tuning the frequency...</div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div style={styles.container}>
+                <div style={styles.errorText}>Broadcast Error: {error}</div>
+            </div>
+        );
+    }
+
+    if (tracks.length === 0) {
+        return (
+            <div style={styles.container}>
+                <div style={styles.errorText}>No tracks found on this station.</div>
+            </div>
+        );
+    }
+
+    const currentTrack = tracks[currentTrackIndex];
+    const firstVideoId = tracks[0].id;
+
+    const embedSrc =
+        `https://www.youtube.com/embed/${firstVideoId}` +
+        `?enablejsapi=1&autoplay=1&playsinline=1&rel=0` +
+        `&origin=${encodeURIComponent(window.location.origin)}`;
 
     return (
         <div style={styles.container}>
             <header style={styles.header}>
-                <h1 style={styles.title}>Automate your business workflows</h1>
+                <h1 style={styles.title}>NormSki Radio Station</h1>
+
+                <div style={styles.headerRight}>
+                    <a
+                        href={YOUTUBE_CHANNEL_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={styles.subscribeButton}
+                        title="Subscribe on YouTube"
+                    >
+                        Subscribe on YouTube
+                    </a>
+                    <div style={styles.nowPlayingInfo}>
+                        Now Playing: {currentTrackIndex + 1} of {tracks.length}
+                    </div>
+                </div>
             </header>
 
-            <div style={styles.layout}>
-                {/* Sidebar with links */}
-                <aside style={styles.sidebar}>
-                    <h2 style={styles.sidebarTitle}>Links</h2>
-                    <ul style={styles.linkList}>
-                        <li style={styles.linkItem}>
-                            <a
-                                href="https://splendorous-cupcake-ea4c80.netlify.app/"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={styles.link}
-                            >
-                                Estate Agents
-                            </a>
-                        </li>
-                        <li style={styles.linkItem}>
-                            <a
-                                href="https://totalrecall.network/"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={styles.link}
-                            >
-                                TotalRecall
-                            </a>
-                        </li>
-                    </ul>
-                </aside>
-
-                {/* Main content */}
-                <main style={styles.mainBody}>
-                    <div style={styles.contentWrapper}>
-                        <img
-                            src={homeImage}
-                            alt="Home"
-                            style={styles.homeImage}
-                        />
-                        <p style={styles.descriptionText}>
-                            Our LLM can help automate your business, make you more efficient and help you make more money
-                        </p>
+            <main style={styles.mainContent}>
+                <div style={styles.threeColumnLayout}>
+                    {/* LEFT: Up Next playlist */}
+                    <div style={styles.leftColumn}>
+                        <div style={styles.playlistContainer}>
+                            <h3 style={styles.playlistHeader}>Up Next Track</h3>
+                            <div style={styles.playlist}>
+                                {tracks.map((track, index) => (
+                                    <div
+                                        key={track.id}
+                                        onClick={() => setCurrentTrackIndex(index)}
+                                        style={{
+                                            ...styles.playlistItem,
+                                            backgroundColor:
+                                                index === currentTrackIndex
+                                                    ? '#2a3942'
+                                                    : 'transparent',
+                                            borderLeft:
+                                                index === currentTrackIndex
+                                                    ? '4px solid #00a884'
+                                                    : '4px solid transparent',
+                                        }}
+                                    >
+                                        <img
+                                            src={track.thumbnail}
+                                            alt=""
+                                            style={styles.thumbnail}
+                                        />
+                                        <span style={styles.playlistItemTitle}>
+                                            {track.title}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
-                </main>
-            </div>
 
-            {/* Hidden canvases & video element required by the render pipeline */}
-            <canvas ref={canvasRef} style={{ display: 'none' }} />
-            <canvas ref={previewCanvasRef} style={{ display: 'none' }} />
-            <video
-                ref={videoElRef}
-                muted
-                playsInline
-                loop
-                preload="auto"
-                style={{ display: 'none' }}
-            />
+                    {/* CENTER: Player + track details + shout form */}
+                    <div style={styles.centerColumn}>
+                        <div style={styles.playerWrapper}>
+                            {activeShoutOut && (
+                                <div style={styles.shoutOutOverlay}>
+                                    Shout: "{activeShoutOut}"
+                                </div>
+                            )}
+
+                            <iframe
+                                id="youtube-player"
+                                style={styles.iframe}
+                                src={embedSrc}
+                                title="YouTube video player"
+                                frameBorder="0"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                allowFullScreen
+                            ></iframe>
+                        </div>
+
+                        <div style={styles.trackDetails}>
+                            <h2 style={styles.trackTitle}>{currentTrack.title}</h2>
+
+                            <div style={styles.controls}>
+                                <button
+                                    onClick={playPreviousTrack}
+                                    style={styles.controlButton}
+                                >
+                                    Prev
+                                </button>
+                                <button
+                                    onClick={playNextTrack}
+                                    style={styles.controlButton}
+                                >
+                                    Next
+                                </button>
+                            </div>
+
+                            <form
+                                onSubmit={handleShoutOutSubmit}
+                                style={styles.shoutOutForm}
+                            >
+                                <input
+                                    type="text"
+                                    value={shoutOutInput}
+                                    onChange={(e) =>
+                                        setShoutOutInput(e.target.value)
+                                    }
+                                    placeholder="Send a shout out..."
+                                    style={styles.shoutOutInput}
+                                    maxLength={280}
+                                    disabled={isSendingShout}
+                                />
+                                <button
+                                    type="submit"
+                                    style={{
+                                        ...styles.shoutOutButton,
+                                        opacity: isSendingShout ? 0.6 : 1,
+                                        cursor: isSendingShout
+                                            ? 'not-allowed'
+                                            : 'pointer',
+                                    }}
+                                    disabled={isSendingShout}
+                                >
+                                    {isSendingShout ? 'Sending...' : 'Send'}
+                                </button>
+                            </form>
+
+                            {shoutError && (
+                                <div style={styles.shoutErrorText}>
+                                    {shoutError}
+                                </div>
+                            )}
+
+                            <div style={styles.detectedCountryText}>
+                                Your country (detected):{' '}
+                                <strong>{userCountry}</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* RIGHT: Shouts table */}
+                    <div style={styles.rightColumn}>
+                        <div style={styles.shoutsContainer}>
+                            <h3 style={styles.shoutsHeader}>
+                                Shouts({shouts.length})
+                            </h3>
+                            {shouts.length === 0 ? (
+                                <div style={styles.noShoutsText}>
+                                    No shouts yet. Be the first to send one!
+                                </div>
+                            ) : (
+                                <div style={styles.shoutsTableWrapper}>
+                                    <table style={styles.shoutsTable}>
+                                        <thead>
+                                            <tr>
+                                                <th style={styles.th}>Shout</th>
+                                                <th style={styles.th}>
+                                                    Country
+                                                </th>
+                                                <th style={styles.th}>Time</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {shouts.map((shout) => (
+                                                <tr
+                                                    key={shout.id}
+                                                    style={styles.tr}
+                                                >
+                                                    <td style={styles.td}>
+                                                        {shout.message}
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        {shout.country || '-'}
+                                                    </td>
+                                                    <td style={styles.td}>
+                                                        {formatDateTimeDMY(
+                                                            shout.created_at
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </main>
         </div>
     );
 }
 
-// ==================================================================
-// Styles
-// ==================================================================
 const styles = {
     container: {
         display: 'flex',
@@ -447,93 +783,291 @@ const styles = {
         fontFamily: 'Segoe UI, sans-serif',
     },
     header: {
-        padding: '24px 20px',
+        padding: '20px',
         backgroundColor: '#202c33',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
         borderBottom: '1px solid #222d34',
-        textAlign: 'center',
+        gap: '16px',
+        flexWrap: 'wrap',
     },
-    title: { margin: 0, color: '#00a884', fontSize: '28px' },
-
-    // New two-column layout
-    layout: {
+    title: {
+        margin: 0,
+        color: '#00a884',
+        fontSize: '24px',
+    },
+    headerRight: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '16px',
+        marginLeft: 'auto',
+        flexWrap: 'wrap',
+        justifyContent: 'flex-end',
+    },
+    subscribeButton: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '8px',
+        padding: '10px 18px',
+        borderRadius: '24px',
+        backgroundColor: '#ff0000',
+        color: '#ffffff',
+        fontSize: '14px',
+        fontWeight: 'bold',
+        textDecoration: 'none',
+        boxShadow: '0 4px 12px rgba(255,0,0,0.35)',
+        whiteSpace: 'nowrap',
+    },
+    nowPlayingInfo: {
+        color: '#8696a0',
+        fontSize: '14px',
+        whiteSpace: 'nowrap',
+    },
+    mainContent: {
         flex: 1,
         display: 'flex',
+        flexDirection: 'column',
+        maxWidth: '1700px',
+        margin: '0 auto',
+        width: '100%',
+        padding: '20px',
+        boxSizing: 'border-box',
+    },
+    threeColumnLayout: {
+        display: 'flex',
+        gap: '20px',
         alignItems: 'flex-start',
-        minHeight: 0,
+        flexWrap: 'wrap',
     },
-
-    // Left sidebar
-    sidebar: {
-        width: '220px',
-        flexShrink: 0,
-        padding: '24px 16px',
-        backgroundColor: '#111b21',
-        borderRight: '1px solid #222d34',
-        minHeight: '100%',
+    leftColumn: {
+        flex: '1 1 260px',
+        minWidth: '240px',
+        maxWidth: '340px',
+        display: 'flex',
+        flexDirection: 'column',
     },
-    sidebarTitle: {
-        margin: '0 0 16px 0',
+    centerColumn: {
+        flex: '2 1 420px',
+        minWidth: '320px',
+        maxWidth: '720px',
+        display: 'flex',
+        flexDirection: 'column',
+    },
+    rightColumn: {
+        flex: '2 1 480px',
+        minWidth: '360px',
+        maxWidth: '720px',
+        display: 'flex',
+        flexDirection: 'column',
+    },
+    playerWrapper: {
+        position: 'relative',
+        width: '100%',
+        aspectRatio: '16/9',
+        backgroundColor: '#000',
+        borderRadius: '12px',
+        overflow: 'hidden',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+    },
+    iframe: {
+        width: '100%',
+        height: '100%',
+        border: 'none',
+    },
+    shoutOutOverlay: {
+        position: 'absolute',
+        top: '20px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        backgroundColor: 'rgba(0, 168, 132, 0.9)',
+        color: '#fff',
+        padding: '12px 24px',
+        borderRadius: '24px',
+        fontSize: '18px',
+        fontWeight: 'bold',
+        zIndex: 10,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+        pointerEvents: 'none',
+        whiteSpace: 'nowrap',
+        maxWidth: '90%',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+    },
+    trackDetails: {
+        marginTop: '20px',
+        textAlign: 'center',
+    },
+    trackTitle: {
+        margin: '0 0 20px 0',
+        fontSize: '20px',
+        color: '#e9edef',
+    },
+    controls: {
+        display: 'flex',
+        justifyContent: 'center',
+        gap: '20px',
+        marginBottom: '20px',
+    },
+    controlButton: {
+        padding: '12px 24px',
+        borderRadius: '24px',
+        backgroundColor: '#00a884',
+        color: '#111',
+        border: 'none',
+        fontWeight: 'bold',
+        fontSize: '16px',
+        cursor: 'pointer',
+    },
+    shoutOutForm: {
+        display: 'flex',
+        justifyContent: 'center',
+        gap: '10px',
+        maxWidth: '400px',
+        margin: '0 auto',
+    },
+    shoutOutInput: {
+        flex: 1,
+        padding: '10px 15px',
+        borderRadius: '20px',
+        border: '1px solid #33414a',
+        backgroundColor: '#202c33',
+        color: '#e9edef',
         fontSize: '14px',
-        textTransform: 'uppercase',
-        letterSpacing: '0.08em',
-        color: '#8696a0',
-        fontWeight: '600',
+        outline: 'none',
     },
-    linkList: {
-        listStyle: 'none',
-        margin: 0,
-        padding: 0,
+    shoutOutButton: {
+        padding: '10px 20px',
+        borderRadius: '20px',
+        backgroundColor: '#33414a',
+        color: '#e9edef',
+        border: 'none',
+        fontWeight: 'bold',
+        cursor: 'pointer',
+    },
+    shoutErrorText: {
+        color: '#ef4444',
+        fontSize: '13px',
+        marginTop: '8px',
+    },
+    detectedCountryText: {
+        color: '#8696a0',
+        fontSize: '12px',
+        marginTop: '10px',
+    },
+    playlistContainer: {
+        display: 'flex',
+        flexDirection: 'column',
+        backgroundColor: '#111b21',
+        border: '1px solid #222d34',
+        borderRadius: '12px',
+        padding: '12px',
+        height: '100%',
+        boxSizing: 'border-box',
+    },
+    playlistHeader: {
+        color: '#8696a0',
+        fontSize: '16px',
+        textTransform: 'uppercase',
+        marginBottom: '10px',
+        marginTop: 0,
+    },
+    playlist: {
+        overflowY: 'auto',
+        maxHeight: '600px',
         display: 'flex',
         flexDirection: 'column',
         gap: '8px',
     },
-    linkItem: {
-        margin: 0,
-        padding: 0,
-    },
-    link: {
-        display: 'block',
-        padding: '10px 12px',
-        borderRadius: '8px',
-        color: '#e9edef',
-        textDecoration: 'none',
-        fontSize: '15px',
-        fontWeight: '500',
-        backgroundColor: '#202c33',
-        border: '1px solid transparent',
-        transition: 'background-color 0.15s ease, border-color 0.15s ease',
-    },
-
-    // Main body (now sits right of sidebar)
-    mainBody: {
-        flex: 1,
+    playlistItem: {
         display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'flex-start',
-        padding: '40px 20px',
-        minWidth: 0,
+        alignItems: 'center',
+        padding: '10px',
+        borderRadius: '8px',
+        cursor: 'pointer',
     },
-    contentWrapper: {
+    thumbnail: {
+        width: '80px',
+        height: '45px',
+        objectFit: 'cover',
+        borderRadius: '4px',
+        marginRight: '15px',
+        flexShrink: 0,
+    },
+    playlistItemTitle: {
+        fontSize: '14px',
+        color: '#e9edef',
+        display: '-webkit-box',
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: 'vertical',
+        overflow: 'hidden',
+    },
+    shoutsContainer: {
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
-        maxWidth: '800px',
-        width: '100%',
-    },
-    homeImage: {
-        display: 'block',
-        maxWidth: '100%',
-        width: '800px',
-        height: 'auto',
+        backgroundColor: '#111b21',
+        border: '1px solid #222d34',
         borderRadius: '12px',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+        padding: '12px',
+        height: '100%',
+        boxSizing: 'border-box',
     },
-    descriptionText: {
-        marginTop: '24px',
-        fontSize: '18px',
-        lineHeight: '1.6',
+    shoutsHeader: {
+        color: '#8696a0',
+        fontSize: '16px',
+        textTransform: 'uppercase',
+        marginBottom: '10px',
+        marginTop: 0,
+    },
+    noShoutsText: {
+        color: '#5c6b73',
+        fontSize: '14px',
+        fontStyle: 'italic',
+        padding: '10px 0',
+    },
+    shoutsTableWrapper: {
+        overflowX: 'auto',
+        overflowY: 'auto',
+        maxHeight: '600px',
+        borderRadius: '8px',
+        border: '1px solid #222d34',
+    },
+    shoutsTable: {
+        width: '100%',
+        borderCollapse: 'collapse',
+        backgroundColor: '#111b21',
+    },
+    th: {
+        textAlign: 'left',
+        padding: '10px 12px',
+        backgroundColor: '#202c33',
+        color: '#00a884',
+        fontSize: '13px',
+        textTransform: 'uppercase',
+        borderBottom: '1px solid #222d34',
+        position: 'sticky',
+        top: 0,
+    },
+    tr: {
+        borderBottom: '1px solid #1c262c',
+    },
+    td: {
+        padding: '10px 12px',
+        fontSize: '14px',
         color: '#e9edef',
+        verticalAlign: 'top',
+        wordBreak: 'break-word',
+    },
+    loadingText: {
+        margin: 'auto',
+        fontSize: '20px',
+        color: '#00a884',
+    },
+    errorText: {
+        margin: 'auto',
+        color: '#ef4444',
+        fontSize: '18px',
+        padding: '20px',
         textAlign: 'center',
-        fontWeight: '500',
     },
 };
